@@ -1,0 +1,1126 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SEO Report Generátor | Pure Online</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'pure-dark': '#0a0a0a',
+                        'pure-darker': '#050505',
+                        'pure-card': '#111111',
+                        'pure-border': '#222222',
+                        'pure-green': '#B8FA21',
+                        'pure-green-dark': '#9ed81c',
+                        'pure-text': '#ffffff',
+                        'pure-muted': '#888888',
+                    },
+                    fontFamily: {
+                        'inter': ['Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background: #0a0a0a; }
+        .tab-active { border-bottom: 2px solid #00FF85; color: #00FF85; }
+        .gradient-text { background: linear-gradient(135deg, #B8FA21 0%, #9ed81c 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .glow { box-shadow: 0 0 30px rgba(184, 250, 33, 0.15); }
+        .glow-sm { box-shadow: 0 0 15px rgba(184, 250, 33, 0.1); }
+        
+        @media print { 
+            .no-print { display: none !important; }
+            
+            @page {
+                margin: 0 !important;
+                size: A4;
+            }
+            
+            body, html { 
+                background: #0a0a0a !important; 
+                margin: 0 !important;
+                padding: 0 !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            
+            * {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            
+            #report {
+                margin: 0 !important;
+                border-radius: 0 !important;
+                border: none !important;
+                box-shadow: none !important;
+                max-width: 100% !important;
+                padding: 40px !important;
+            }
+        }
+        
+        input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
+    </style>
+</head>
+<body class="bg-pure-dark min-h-screen text-pure-text">
+    <div id="root"></div>
+
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script type="text/babel">
+        const { useState, useCallback, memo } = React;
+
+        const calcChange = (current, prev) => {
+            if (!prev || prev === 0) return null;
+            return Math.round((current - prev) / prev * 1000) / 10;
+        };
+
+        const formatNumber = (num) => num.toLocaleString('cs-CZ');
+        const formatCurrency = (num) => num.toLocaleString('cs-CZ') + ' Kč';
+
+        const getMonthName = (dateStr) => {
+            const months = ['leden', 'únor', 'březen', 'duben', 'květen', 'červen',
+                          'červenec', 'srpen', 'září', 'říjen', 'listopad', 'prosinec'];
+            try {
+                const [year, month] = dateStr.split('-');
+                return `${months[parseInt(month) - 1]} ${year}`;
+            } catch { return dateStr; }
+        };
+
+        const getMonthShort = (dateStr) => {
+            try {
+                const [year, month] = dateStr.split('-');
+                return `${month}/${year}`;
+            } catch { return dateStr; }
+        };
+
+        const ChangeIndicator = ({ current, prev, inverse = false, label = '' }) => {
+            const change = calcChange(current, prev);
+            if (change === null) return <span className="text-pure-muted text-xs">{label ? `${label}: ` : ''}NOVÉ</span>;
+            const isPositive = inverse ? change < 0 : change > 0;
+            return (
+                <span className={`text-xs font-semibold ${isPositive ? 'text-pure-green' : 'text-red-400'}`}>
+                    {label ? `${label}: ` : ''}{isPositive ? '▲' : '▼'} {change > 0 ? '+' : ''}{change}%
+                </span>
+            );
+        };
+
+        const DualChangeIndicator = ({ current, mom, yoy, inverse = false }) => (
+            <div className="flex flex-col gap-0.5">
+                <ChangeIndicator current={current} prev={mom} inverse={inverse} label="MoM" />
+                <ChangeIndicator current={current} prev={yoy} inverse={inverse} label="YoY" />
+            </div>
+        );
+
+        const Ga4SessionsUpload = memo(({ label, onDataParsed, suffix = '' }) => {
+            const handleFileChange = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        const text = event.target.result;
+                        const lines = text.split('\n');
+                        
+                        // Najdi řádek s Organic Search
+                        for (let i = 0; i < lines.length; i++) {
+                            const line = lines[i].trim();
+                            if (line.startsWith('Organic Search')) {
+                                const parts = line.split(',');
+                                if (parts.length >= 2) {
+                                    const sessions = parseInt(parts[1]) || 0;
+                                    onDataParsed({ sessions }, suffix);
+                                }
+                                break;
+                            }
+                        }
+                    };
+                    reader.readAsText(file);
+                }
+            };
+            
+            return (
+                <div>
+                    <label className="block text-xs font-medium text-pure-muted mb-1">{label}</label>
+                    <input
+                        type="file"
+                        accept=".csv"
+                        onChange={handleFileChange}
+                        className="w-full text-xs text-pure-muted file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-pure-green/20 file:text-pure-green hover:file:bg-pure-green/30 cursor-pointer"
+                    />
+                </div>
+            );
+        });
+
+        const GscTrafficUpload = memo(({ label, onDataParsed, suffix = '' }) => {
+            const handleFileChange = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        const text = event.target.result;
+                        const lines = text.split('\n');
+                        
+                        let totalClicks = 0;
+                        let totalImpressions = 0;
+                        let totalPosition = 0;
+                        let count = 0;
+                        
+                        // Přeskoč hlavičku, sečti všechny řádky
+                        for (let i = 1; i < lines.length; i++) {
+                            const line = lines[i].trim();
+                            if (!line) continue;
+                            
+                            const parts = line.split(',');
+                            if (parts.length >= 5) {
+                                totalClicks += parseInt(parts[1]) || 0;
+                                totalImpressions += parseInt(parts[2]) || 0;
+                                totalPosition += parseFloat(parts[4]) || 0;
+                                count++;
+                            }
+                        }
+                        
+                        const avgPosition = count > 0 ? Math.round((totalPosition / count) * 100) / 100 : 0;
+                        const ctr = totalImpressions > 0 ? Math.round((totalClicks / totalImpressions) * 10000) / 100 : 0;
+                        
+                        onDataParsed({
+                            clicks: totalClicks,
+                            impressions: totalImpressions,
+                            avgPosition,
+                            ctr
+                        }, suffix);
+                    };
+                    reader.readAsText(file);
+                }
+            };
+            
+            return (
+                <div>
+                    <label className="block text-xs font-medium text-pure-muted mb-1">{label}</label>
+                    <input
+                        type="file"
+                        accept=".csv"
+                        onChange={handleFileChange}
+                        className="w-full text-xs text-pure-muted file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-pure-green/20 file:text-pure-green hover:file:bg-pure-green/30 cursor-pointer"
+                    />
+                </div>
+            );
+        });
+
+        const GscKeywordsUpload = memo(({ label, onDataParsed }) => {
+            const handleFileChange = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        const text = event.target.result;
+                        const lines = text.split('\n');
+                        
+                        const keywords = [];
+                        
+                        // Přeskoč hlavičku
+                        for (let i = 1; i < lines.length; i++) {
+                            const line = lines[i].trim();
+                            if (!line) continue;
+                            
+                            const parts = line.split(',');
+                            if (parts.length >= 5) {
+                                const keyword = parts[0];
+                                const clicks = parseInt(parts[1]) || 0;
+                                const position = parseFloat(parts[4]) || 0;
+                                
+                                if (keyword && clicks > 0) {
+                                    keywords.push({ keyword, clicks, position });
+                                }
+                            }
+                        }
+                        
+                        // Seřaď podle kliků a vezmi top 10
+                        keywords.sort((a, b) => b.clicks - a.clicks);
+                        const top10 = keywords.slice(0, 10);
+                        
+                        // Převeď na textový formát (keyword | intent | clicks | position)
+                        const textData = top10.map(row => `${row.keyword} | Komerční | ${row.clicks} | ${row.position.toFixed(2)}`).join('\n');
+                        onDataParsed(textData);
+                    };
+                    reader.readAsText(file);
+                }
+            };
+            
+            return (
+                <div className="mb-4">
+                    <label className="block text-sm font-medium text-pure-muted mb-2">{label}</label>
+                    <input
+                        type="file"
+                        accept=".csv"
+                        onChange={handleFileChange}
+                        className="w-full text-sm text-pure-muted file:mr-2 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:bg-pure-green/20 file:text-pure-green hover:file:bg-pure-green/30 cursor-pointer"
+                    />
+                </div>
+            );
+        });
+
+        const BusinessCsvUpload = memo(({ label, onDataParsed, suffix = '' }) => {
+            const handleFileChange = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        const text = event.target.result;
+                        const lines = text.split('\n');
+                        
+                        // Najdi řádek s Organic Search
+                        for (let i = 0; i < lines.length; i++) {
+                            const line = lines[i].trim();
+                            if (line.startsWith('Organic Search')) {
+                                const parts = line.split(',');
+                                if (parts.length >= 10) {
+                                    const sessions = parseInt(parts[1]) || 0;
+                                    const conversions = parseInt(parts[7]) || 0;
+                                    const revenue = parseFloat(parts[9]) || 0;
+                                    const convRate = sessions > 0 ? Math.round((conversions / sessions) * 10000) / 100 : 0;
+                                    
+                                    onDataParsed({
+                                        sessions,
+                                        conversions,
+                                        revenue: Math.round(revenue),
+                                        convRate
+                                    }, suffix);
+                                }
+                                break;
+                            }
+                        }
+                    };
+                    reader.readAsText(file);
+                }
+            };
+            
+            return (
+                <div>
+                    <label className="block text-xs font-medium text-pure-muted mb-1">{label}</label>
+                    <input
+                        type="file"
+                        accept=".csv"
+                        onChange={handleFileChange}
+                        className="w-full text-xs text-pure-muted file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-pure-green/20 file:text-pure-green hover:file:bg-pure-green/30 cursor-pointer"
+                    />
+                </div>
+            );
+        });
+
+        const CsvUpload = memo(({ label, onFileChange, fileName }) => {
+            const handleFileChange = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        onFileChange(event.target.result, file.name);
+                    };
+                    reader.readAsText(file);
+                }
+            };
+            
+            return (
+                <div className="mb-2">
+                    <label className="block text-sm font-medium text-pure-muted mb-2">{label}</label>
+                    <div className="flex items-center gap-3">
+                        <label className="py-2 px-4 rounded bg-pure-green/20 text-pure-green text-sm cursor-pointer hover:bg-pure-green/30 transition-colors">
+                            Vybrat soubor
+                            <input type="file" accept=".csv" onChange={handleFileChange} className="hidden" />
+                        </label>
+                        <span className="text-sm text-pure-muted">{fileName || 'Soubor nevybrán'}</span>
+                        {fileName && <span className="text-pure-green">✓</span>}
+                    </div>
+                </div>
+            );
+        });
+
+        const GscKeywordsUpload = memo(({ label, onFileChange, fileName }) => {
+            const handleFileChange = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        onFileChange(event.target.result, file.name);
+                    };
+                    reader.readAsText(file);
+                }
+            };
+            
+            return (
+                <div className="mb-2">
+                    <label className="block text-sm font-medium text-pure-muted mb-2">{label}</label>
+                    <div className="flex items-center gap-3">
+                        <label className="py-2 px-4 rounded bg-pure-green/20 text-pure-green text-sm cursor-pointer hover:bg-pure-green/30 transition-colors">
+                            Vybrat soubor
+                            <input type="file" accept=".csv" onChange={handleFileChange} className="hidden" />
+                        </label>
+                        <span className="text-sm text-pure-muted">{fileName || 'Soubor nevybrán'}</span>
+                        {fileName && <span className="text-pure-green">✓</span>}
+                    </div>
+                </div>
+            );
+        });
+
+        const ImageUpload = memo(({ label, name, value, onChange }) => {
+            const handleFileChange = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        onChange({ target: { name, value: reader.result, type: 'text' } });
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+            
+            return (
+                <div className="mb-4">
+                    <label className="block text-sm font-medium text-pure-muted mb-2">{label}</label>
+                    <div className="flex items-center gap-3">
+                        {value && (
+                            <img src={value} alt="Logo" className="w-12 h-12 object-contain rounded border border-pure-border" />
+                        )}
+                        <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleFileChange}
+                            className="w-full text-sm text-pure-muted file:mr-2 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:bg-pure-green/20 file:text-pure-green hover:file:bg-pure-green/30 cursor-pointer"
+                        />
+                    </div>
+                </div>
+            );
+        });
+
+        const InputField = memo(({ label, name, value, onChange, type = 'text', placeholder = '' }) => (
+            <div className="mb-4">
+                <label className="block text-sm font-medium text-pure-muted mb-2">{label}</label>
+                <input
+                    type={type}
+                    name={name}
+                    defaultValue={value}
+                    onBlur={onChange}
+                    placeholder={placeholder}
+                    className="w-full px-4 py-3 bg-pure-card border border-pure-border rounded-lg text-pure-text focus:border-pure-green focus:outline-none transition-colors"
+                />
+            </div>
+        ));
+
+        const MetricInputGroup = memo(({ label, name, data, onChange }) => (
+            <div className="mb-4 p-4 bg-pure-card border border-pure-border rounded-lg">
+                <label className="block text-sm font-medium text-pure-text mb-3">{label}</label>
+                <div className="grid grid-cols-4 gap-3">
+                    <div>
+                        <span className="text-xs text-pure-muted block mb-1">Aktuální</span>
+                        <input type="number" name={name} defaultValue={data[name]} onBlur={onChange} className="w-full px-3 py-2 bg-pure-darker border border-pure-border rounded text-sm text-pure-text focus:border-pure-green focus:outline-none" />
+                    </div>
+                    <div>
+                        <span className="text-xs text-pure-muted block mb-1">Minulý měsíc</span>
+                        <input type="number" name={`${name}Mom`} defaultValue={data[`${name}Mom`]} onBlur={onChange} className="w-full px-3 py-2 bg-pure-darker border border-pure-border rounded text-sm text-pure-text focus:border-pure-green focus:outline-none" />
+                    </div>
+                    <div>
+                        <span className="text-xs text-pure-muted block mb-1">Minulý rok</span>
+                        <input type="number" name={`${name}Yoy`} defaultValue={data[`${name}Yoy`]} onBlur={onChange} className="w-full px-3 py-2 bg-pure-darker border border-pure-border rounded text-sm text-pure-text focus:border-pure-green focus:outline-none" />
+                    </div>
+                    <div>
+                        <span className="text-xs text-pure-muted block mb-1">Začátek spolupráce</span>
+                        <input type="number" name={`${name}Start`} defaultValue={data[`${name}Start`]} onBlur={onChange} className="w-full px-3 py-2 bg-pure-darker border border-pure-border rounded text-sm text-pure-text focus:border-pure-green focus:outline-none" />
+                    </div>
+                </div>
+            </div>
+        ));
+
+        const TextAreaField = memo(({ label, name, value, onChange, placeholder = '', rows = 4 }) => (
+            <div className="mb-4">
+                <label className="block text-sm font-medium text-pure-muted mb-2">{label}</label>
+                <textarea
+                    name={name}
+                    key={value}
+                    defaultValue={value}
+                    onBlur={onChange}
+                    placeholder={placeholder}
+                    rows={rows}
+                    className="w-full px-4 py-3 bg-pure-card border border-pure-border rounded-lg text-pure-text focus:border-pure-green focus:outline-none transition-colors"
+                />
+            </div>
+        ));
+
+        const ReportPreview = ({ data }) => {
+            // Parsuj Top stránky z CSV
+            const parseTopPagesCsv = (csvText) => {
+                if (!csvText) return [];
+                const lines = csvText.split('\n');
+                const parsedData = [];
+                
+                let dataStartIndex = 0;
+                for (let i = 0; i < lines.length; i++) {
+                    if (!lines[i].startsWith('#') && lines[i].trim() !== '' && !lines[i].includes('Vstupní stránka')) {
+                        if (lines[i-1] && lines[i-1].includes('Vstupní stránka')) {
+                            dataStartIndex = i;
+                            break;
+                        }
+                    }
+                }
+                
+                for (let i = dataStartIndex; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (!line || line.startsWith('#')) continue;
+                    
+                    const parts = line.split(',');
+                    if (parts.length >= 6) {
+                        const url = parts[0];
+                        const sessions = parseInt(parts[1]) || 0;
+                        const conversions = parseInt(parts[5]) || 0;
+                        
+                        if (url && url !== '(not set)' && sessions > 0) {
+                            parsedData.push({ url, sessions, conversions });
+                        }
+                    }
+                }
+                
+                parsedData.sort((a, b) => b.conversions - a.conversions);
+                return parsedData.slice(0, 5);
+            };
+            
+            // Parsuj Keywords z CSV
+            const parseKeywordsCsv = (csvText) => {
+                if (!csvText) return [];
+                const lines = csvText.split('\n');
+                const keywords = [];
+                
+                for (let i = 1; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (!line) continue;
+                    
+                    const parts = line.split(',');
+                    if (parts.length >= 5) {
+                        const keyword = parts[0];
+                        const clicks = parseInt(parts[1]) || 0;
+                        const position = parseFloat(parts[4]) || 0;
+                        
+                        if (keyword && clicks > 0) {
+                            keywords.push({ keyword, clicks, position });
+                        }
+                    }
+                }
+                
+                keywords.sort((a, b) => b.clicks - a.clicks);
+                return keywords.slice(0, 10);
+            };
+            
+            const topPages = parseTopPagesCsv(data.topPagesCsv);
+            const keywords = parseKeywordsCsv(data.topKeywordsCsv);
+
+            const priorities = data.priorities.split('\n').filter(l => l.trim()).map(line => {
+                const parts = line.split('|').map(p => p.trim());
+                return { action: parts[0] || '', impact: parts[1] || '', effort: parts[2] || '', priority: parts[3] || 'STŘEDNÍ' };
+            });
+
+            const realizedList = data.realized.split('\n').filter(l => l.trim());
+            const plannedList = data.planned.split('\n').filter(l => l.trim());
+            const roi = data.seoFee > 0 ? Math.round((data.revenue - data.seoFee) / data.seoFee * 100) : 0;
+
+            return (
+                <div className="bg-pure-darker max-w-4xl mx-auto p-8 rounded-2xl border border-pure-border glow print:max-w-full print:m-0 print:rounded-none print:border-0" id="report">
+                    {/* Header */}
+                    <div className="flex justify-between items-center pb-6 border-b border-pure-border mb-8">
+                        <div className="flex items-center gap-4">
+                            {data.clientLogo && (
+                                <img src={data.clientLogo} alt="Logo" className="w-12 h-12 object-contain rounded-lg" />
+                            )}
+                            <div>
+                                <div className="text-2xl font-bold text-pure-text">{(data.clientName || 'KLIENT').toUpperCase()}</div>
+                                <div className="text-sm text-pure-muted">Měsíční SEO report {getMonthShort(data.reportMonth)}</div>
+                            </div>
+                        </div>
+                        <div className="text-right">
+                            <div className="text-xl font-bold gradient-text">{getMonthName(data.reportMonth)}</div>
+                            <div className="text-xs text-pure-muted">MoM = měsíc/měsíc | YoY = rok/rok</div>
+                        </div>
+                    </div>
+
+                    {/* KPI Grid */}
+                    <h2 className="text-lg font-bold text-pure-text mb-4 flex items-center gap-2">
+                        <span className="text-pure-green">📊</span> Shrnutí výkonnosti
+                    </h2>
+                    <div className="grid grid-cols-4 gap-4 mb-8">
+                        <div className="bg-pure-card rounded-xl p-4 border border-pure-border hover:border-pure-green/50 transition-colors">
+                            <div className="text-xs text-pure-muted uppercase mb-1">Tržby z organiku</div>
+                            <div className="text-2xl font-bold text-pure-text">{formatCurrency(data.revenue)}</div>
+                            <DualChangeIndicator current={data.revenue} mom={data.revenueMom} yoy={data.revenueYoy} />
+                        </div>
+                        <div className="bg-pure-card rounded-xl p-4 border border-pure-border hover:border-pure-green/50 transition-colors">
+                            <div className="text-xs text-pure-muted uppercase mb-1">Konverze</div>
+                            <div className="text-2xl font-bold text-pure-text">{data.conversions}</div>
+                            <DualChangeIndicator current={data.conversions} mom={data.conversionsMom} yoy={data.conversionsYoy} />
+                        </div>
+                        <div className="bg-pure-card rounded-xl p-4 border border-pure-border hover:border-pure-green/50 transition-colors">
+                            <div className="text-xs text-pure-muted uppercase mb-1">Míra konverze</div>
+                            <div className="text-2xl font-bold text-pure-text">{data.convRate}%</div>
+                            <DualChangeIndicator current={data.convRate} mom={data.convRateMom} yoy={data.convRateYoy} />
+                        </div>
+                        <div className="bg-pure-card rounded-xl p-4 border border-pure-border hover:border-pure-green/50 transition-colors">
+                            <div className="text-xs text-pure-muted uppercase mb-1">Čistý zisk</div>
+                            <div className="text-2xl font-bold text-pure-green">{formatCurrency(data.revenue - data.seoFee)}</div>
+                            <div className="text-xs text-pure-muted">Po odečtení investice</div>
+                        </div>
+                    </div>
+
+                    {/* ROI Section */}
+                    <div className="bg-gradient-to-r from-pure-green/10 to-pure-card rounded-xl p-6 mb-8 border border-pure-green/30 glow-sm">
+                        <h3 className="text-lg font-bold text-pure-text mb-6 flex items-center gap-2">
+                            <span>💰</span> Návratnost SEO investice
+                        </h3>
+                        <div className="grid grid-cols-3 gap-6">
+                            <div className="text-center p-4 bg-pure-darker/50 rounded-xl">
+                                <div className="text-4xl font-bold text-pure-green">{roi > 0 ? '+' : ''}{roi}%</div>
+                                <div className="text-sm text-pure-text mt-2 font-medium">ROI</div>
+                                <div className="text-xs text-pure-muted mt-1">Návratnost investice</div>
+                                <div className="text-xs text-pure-muted mt-3 p-2 bg-pure-card rounded-lg">O kolik % převýšily tržby investici do SEO</div>
+                            </div>
+                            <div className="text-center p-4 bg-pure-darker/50 rounded-xl">
+                                <div className="text-4xl font-bold text-blue-400">{data.seoFee > 0 ? (data.revenue / data.seoFee).toFixed(1) : 0}×</div>
+                                <div className="text-sm text-pure-text mt-2 font-medium">ROAS</div>
+                                <div className="text-xs text-pure-muted mt-1">Každá 1 Kč vydělala {data.seoFee > 0 ? (data.revenue / data.seoFee).toFixed(1) : 0} Kč</div>
+                                <div className="text-xs text-pure-muted mt-3 p-2 bg-pure-card rounded-lg">Kolikrát se vrátila každá investovaná koruna</div>
+                            </div>
+                            <div className="text-center p-4 bg-pure-darker/50 rounded-xl">
+                                <div className="text-4xl font-bold text-purple-400">{formatCurrency(data.revenue - data.seoFee)}</div>
+                                <div className="text-sm text-pure-text mt-2 font-medium">Čistý zisk</div>
+                                <div className="text-xs text-pure-muted mt-1">Tržby mínus investice</div>
+                                <div className="text-xs text-pure-muted mt-3 p-2 bg-pure-card rounded-lg">Reálný zisk po odečtení nákladů na SEO</div>
+                            </div>
+                        </div>
+                        <div className="mt-6 pt-4 border-t border-pure-border/50">
+                            <div className="flex justify-between items-center text-sm mb-2">
+                                <span className="text-pure-muted">Měsíční investice do SEO:</span>
+                                <span className="font-semibold text-pure-text">{formatCurrency(data.seoFee)}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-sm">
+                                <span className="text-pure-muted">Tržby z organického vyhledávání:</span>
+                                <span className="font-semibold text-pure-green">{formatCurrency(data.revenue)}</span>
+                            </div>
+                            {roi > 0 && (
+                                <div className="mt-4 p-3 bg-pure-green/20 rounded-lg text-center border border-pure-green/30">
+                                    <span className="text-pure-green font-medium">✅ SEO investice se vyplatila – přinesla {(data.revenue / data.seoFee).toFixed(1)}× více než stála</span>
+                                </div>
+                            )}
+                            {roi <= 0 && roi > -100 && (
+                                <div className="mt-4 p-3 bg-yellow-500/20 rounded-lg text-center border border-yellow-500/30">
+                                    <span className="text-yellow-400 font-medium">⚠️ SEO zatím nepřineslo zisk – doporučujeme pokračovat pro dlouhodobý efekt</span>
+                                </div>
+                            )}
+                            {roi <= -100 && (
+                                <div className="mt-4 p-3 bg-blue-500/20 rounded-lg text-center border border-blue-500/30">
+                                    <span className="text-blue-400 font-medium">📈 SEO je dlouhodobá investice – výsledky se typicky projevují po 3-6 měsících</span>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Two Columns */}
+                    <div className="grid grid-cols-2 gap-6 mb-8">
+                        <div className="bg-pure-card rounded-xl p-5 border border-pure-border">
+                            <div className="font-semibold text-pure-text mb-4 flex items-center gap-2">
+                                <span className="text-pure-green">🏆</span> Top stránky dle konverzí
+                            </div>
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="border-b border-pure-border">
+                                        <th className="pb-2 text-left text-pure-muted font-medium">Stránka</th>
+                                        <th className="pb-2 text-right text-pure-muted font-medium">Návštěvy</th>
+                                        <th className="pb-2 text-right text-pure-muted font-medium">Konverze</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {topPages.slice(0, 5).map((page, i) => (
+                                        <tr key={i} className="border-b border-pure-border/50 group">
+                                            <td className="py-2 text-pure-text max-w-[180px] truncate cursor-help" title={page.url}>{page.url}</td>
+                                            <td className="py-2 text-right text-pure-text">{formatNumber(page.sessions)}</td>
+                                            <td className="py-2 text-right font-semibold text-pure-green">{page.conversions}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div className="bg-pure-card rounded-xl p-5 border border-pure-border">
+                            <div className="font-semibold text-pure-text mb-4 flex items-center gap-2">
+                                <span className="text-pure-green">📈</span> Přehled návštěvnosti
+                            </div>
+                            <div className="space-y-3">
+                                {[
+                                    { label: 'Návštěvy', value: data.sessions, mom: data.sessionsMom, yoy: data.sessionsYoy },
+                                    { label: 'Prokliky', value: data.clicks, mom: data.clicksMom, yoy: data.clicksYoy },
+                                    { label: 'Zobrazení', value: data.impressions, mom: data.impressionsMom, yoy: data.impressionsYoy },
+                                    { label: 'Prům. pozice', value: data.avgPosition, mom: data.avgPositionMom, yoy: data.avgPositionYoy, inverse: true, format: 'position' },
+                                    { label: 'CTR', value: data.ctr, mom: data.ctrMom, yoy: data.ctrYoy, format: 'percent' },
+                                ].map((item, i) => (
+                                    <div key={i} className="flex justify-between items-center py-2 border-b border-pure-border/50 last:border-0">
+                                        <span className="text-pure-muted">{item.label}</span>
+                                        <div className="text-right">
+                                            <div className="font-semibold text-pure-text">
+                                                {item.format === 'position' ? item.value.toFixed(2) : item.format === 'percent' ? `${item.value}%` : formatNumber(item.value)}
+                                            </div>
+                                            <DualChangeIndicator current={item.value} mom={item.mom} yoy={item.yoy} inverse={item.inverse} />
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Summary */}
+                    {data.summary && (
+                        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-5 mb-8">
+                            <div className="font-semibold text-yellow-400 mb-2 flex items-center gap-2">💬 Komentář měsíce</div>
+                            <div className="text-pure-text">{data.summary}</div>
+                        </div>
+                    )}
+
+                    {/* Keywords */}
+                    {keywords.length > 0 && (
+                        <div className="mb-8">
+                            <h2 className="text-lg font-bold text-pure-text mb-4 flex items-center gap-2">
+                                <span className="text-pure-green">🎯</span> Top klíčová slova
+                            </h2>
+                            <div className="bg-pure-card rounded-xl p-5 border border-pure-border">
+                                <table className="w-full text-sm">
+                                    <thead>
+                                        <tr className="border-b border-pure-border">
+                                            <th className="pb-3 text-left text-pure-muted font-medium">Klíčové slovo</th>
+                                            <th className="pb-3 text-right text-pure-muted font-medium">Prokliky</th>
+                                            <th className="pb-3 text-right text-pure-muted font-medium">Pozice</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {keywords.slice(0, 10).map((kw, i) => (
+                                            <tr key={i} className="border-b border-pure-border/50">
+                                                <td className="py-3 font-medium text-pure-text">{kw.keyword}</td>
+                                                <td className="py-3 text-right text-pure-text">{kw.clicks}</td>
+                                                <td className={`py-3 text-right ${kw.position <= 3 ? 'text-pure-green font-semibold' : kw.position > 10 ? 'text-red-400' : 'text-pure-text'}`}>{kw.position.toFixed(2)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Activities */}
+                    {(realizedList.length > 0 || plannedList.length > 0) && (
+                        <div className="mb-8">
+                            <h2 className="text-lg font-bold text-pure-text mb-4 flex items-center gap-2">
+                                <span className="text-pure-green">🚀</span> Aktivity
+                            </h2>
+                            <div className="grid grid-cols-2 gap-6">
+                                {realizedList.length > 0 && (
+                                    <div className="bg-pure-green/10 rounded-xl p-5 border border-pure-green/30">
+                                        <h4 className="font-semibold text-pure-green mb-3">✅ Realizováno</h4>
+                                        <ul className="space-y-2">
+                                            {realizedList.map((item, i) => <li key={i} className="text-sm text-pure-text flex items-start gap-2"><span className="text-pure-green">✓</span> {item}</li>)}
+                                        </ul>
+                                    </div>
+                                )}
+                                {plannedList.length > 0 && (
+                                    <div className="bg-blue-500/10 rounded-xl p-5 border border-blue-500/30">
+                                        <h4 className="font-semibold text-blue-400 mb-3">⚙️ Plánováno</h4>
+                                        <ul className="space-y-2">
+                                            {plannedList.map((item, i) => <li key={i} className="text-sm text-pure-text flex items-start gap-2"><span className="text-blue-400">○</span> {item}</li>)}
+                                        </ul>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Vývoj od zahájení spolupráce */}
+                    {data.startDate && (
+                        <div className="mb-8">
+                            <h2 className="text-lg font-bold text-pure-text mb-4 flex items-center gap-2">
+                                <span className="text-pure-green">📈</span> Vývoj od zahájení spolupráce ({getMonthShort(data.startDate)})
+                            </h2>
+                            <div className="bg-gradient-to-r from-purple-500/10 to-pure-card rounded-xl p-6 border border-purple-500/30">
+                                <div className="grid grid-cols-4 gap-4">
+                                    {[
+                                        { label: 'Tržby', current: data.revenue, start: data.revenueStart, format: 'currency' },
+                                        { label: 'Konverze', current: data.conversions, start: data.conversionsStart, format: 'number' },
+                                        { label: 'Návštěvy', current: data.sessions, start: data.sessionsStart, format: 'number' },
+                                        { label: 'Prokliky', current: data.clicks, start: data.clicksStart, format: 'number' },
+                                    ].map((item, i) => {
+                                        const change = calcChange(item.current, item.start);
+                                        const isPositive = change > 0;
+                                        return (
+                                            <div key={i} className="bg-pure-darker/50 rounded-xl p-4 text-center">
+                                                <div className="text-xs text-pure-muted uppercase mb-2">{item.label}</div>
+                                                <div className="text-lg font-bold text-pure-text mb-1">
+                                                    {item.format === 'currency' ? formatCurrency(item.current) : formatNumber(item.current)}
+                                                </div>
+                                                <div className="text-xs text-pure-muted mb-2">
+                                                    Start: {item.format === 'currency' ? formatCurrency(item.start) : formatNumber(item.start)}
+                                                </div>
+                                                {change !== null ? (
+                                                    <div className={`text-lg font-bold ${isPositive ? 'text-pure-green' : 'text-red-400'}`}>
+                                                        {isPositive ? '▲' : '▼'} {change > 0 ? '+' : ''}{change}%
+                                                    </div>
+                                                ) : (
+                                                    <div className="text-sm text-pure-muted">—</div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                <div className="grid grid-cols-4 gap-4 mt-4">
+                                    {[
+                                        { label: 'Zobrazení', current: data.impressions, start: data.impressionsStart, format: 'number' },
+                                        { label: 'Prům. pozice', current: data.avgPosition, start: data.avgPositionStart, format: 'position', inverse: true },
+                                        { label: 'CTR', current: data.ctr, start: data.ctrStart, format: 'percent' },
+                                        { label: 'Míra konverze', current: data.convRate, start: data.convRateStart, format: 'percent' },
+                                    ].map((item, i) => {
+                                        const change = calcChange(item.current, item.start);
+                                        const isPositive = item.inverse ? change < 0 : change > 0;
+                                        return (
+                                            <div key={i} className="bg-pure-darker/50 rounded-xl p-4 text-center">
+                                                <div className="text-xs text-pure-muted uppercase mb-2">{item.label}</div>
+                                                <div className="text-lg font-bold text-pure-text mb-1">
+                                                    {item.format === 'position' ? item.current.toFixed(2) : item.format === 'percent' ? `${item.current}%` : formatNumber(item.current)}
+                                                </div>
+                                                <div className="text-xs text-pure-muted mb-2">
+                                                    Start: {item.format === 'position' ? item.start.toFixed(2) : item.format === 'percent' ? `${item.start}%` : formatNumber(item.start)}
+                                                </div>
+                                                {change !== null ? (
+                                                    <div className={`text-lg font-bold ${isPositive ? 'text-pure-green' : 'text-red-400'}`}>
+                                                        {isPositive ? '▲' : '▼'} {change > 0 ? '+' : ''}{change}%
+                                                    </div>
+                                                ) : (
+                                                    <div className="text-sm text-pure-muted">—</div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Priorities */}
+                    {priorities.length > 0 && (
+                        <div className="bg-pure-card rounded-xl p-5 border border-pure-border mb-8">
+                            <div className="font-semibold text-pure-text mb-4 flex items-center gap-2">🎯 Priority</div>
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="border-b border-pure-border">
+                                        <th className="pb-3 text-left text-pure-muted font-medium">Akce</th>
+                                        <th className="pb-3 text-center text-pure-muted font-medium">Dopad</th>
+                                        <th className="pb-3 text-center text-pure-muted font-medium">Náročnost</th>
+                                        <th className="pb-3 text-center text-pure-muted font-medium">Priorita</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {priorities.map((p, i) => (
+                                        <tr key={i} className="border-b border-pure-border/50">
+                                            <td className="py-3 font-medium text-pure-text">{p.action}</td>
+                                            <td className="py-3 text-center text-pure-green">{p.impact}</td>
+                                            <td className="py-3 text-center text-pure-text">{p.effort}</td>
+                                            <td className="py-3 text-center">
+                                                <span className={`px-2 py-1 rounded text-xs font-medium
+                                                    ${p.priority === 'VYSOKÁ' ? 'bg-red-500/20 text-red-400' : ''}
+                                                    ${p.priority === 'STŘEDNÍ' ? 'bg-yellow-500/20 text-yellow-400' : ''}
+                                                    ${p.priority === 'NÍZKÁ' ? 'bg-pure-green/20 text-pure-green' : ''}
+                                                `}>{p.priority === 'VYSOKÁ' ? '🔴' : p.priority === 'STŘEDNÍ' ? '🟡' : '🟢'} {p.priority}</span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+
+                    {/* Footer */}
+                    <div className="mt-8 pt-6 border-t border-pure-border flex justify-between items-center">
+                        <div>
+                            <div className="text-xs text-pure-muted">Připravil</div>
+                            <div className="text-lg font-bold text-pure-text">{data.preparedBy}</div>
+                        </div>
+                        <div className="text-right">
+                            <div className="text-sm font-bold gradient-text">Pure.</div>
+                            <div className="text-xs text-pure-muted">pureonline.cz</div>
+                        </div>
+                    </div>
+                    
+                    {/* Copyright */}
+                    <div className="mt-4 pt-4 border-t border-pure-border/30 text-center">
+                        <div className="text-xs text-pure-muted">© {new Date().getFullYear()} Milan Fafek</div>
+                    </div>
+                </div>
+            );
+        };
+
+        function App() {
+            const [activeTab, setActiveTab] = useState(0);
+            const [showPreview, setShowPreview] = useState(false);
+            const [data, setData] = useState({
+                clientName: '', clientLogo: '', reportMonth: new Date().toISOString().slice(0, 7), preparedBy: '', seoFee: 15000,
+                startDate: '',
+                revenue: 0, revenueMom: 0, revenueYoy: 0, revenueStart: 0,
+                conversions: 0, conversionsMom: 0, conversionsYoy: 0, conversionsStart: 0,
+                convRate: 0, convRateMom: 0, convRateYoy: 0, convRateStart: 0,
+                sessions: 0, sessionsMom: 0, sessionsYoy: 0, sessionsStart: 0,
+                clicks: 0, clicksMom: 0, clicksYoy: 0, clicksStart: 0,
+                impressions: 0, impressionsMom: 0, impressionsYoy: 0, impressionsStart: 0,
+                avgPosition: 0, avgPositionMom: 0, avgPositionYoy: 0, avgPositionStart: 0,
+                ctr: 0, ctrMom: 0, ctrYoy: 0, ctrStart: 0,
+                topPages: '', topKeywords: '', summary: '', realized: '', planned: '', priorities: '',
+                topPagesCsv: '', topKeywordsCsv: '', topPagesFileName: '', topKeywordsFileName: ''
+            });
+
+            const handleBlur = useCallback((e) => {
+                const { name, value, type } = e.target;
+                setData(prev => ({ ...prev, [name]: type === 'number' ? parseFloat(value) || 0 : value }));
+            }, []);
+
+            const tabs = ['1️⃣ Info', '2️⃣ Byznys', '3️⃣ Návštěvnost', '4️⃣ Data', '5️⃣ Text'];
+
+            return (
+                <div className="min-h-screen bg-pure-dark">
+                    {/* Header */}
+                    <div className="bg-pure-darker border-b border-pure-border no-print">
+                        <div className="max-w-6xl mx-auto px-4 py-6">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h1 className="text-2xl font-bold text-pure-text">SEO Report <span className="gradient-text">Generátor</span></h1>
+                                    <p className="text-pure-muted text-sm">Nástroj pro tvorbu SEO reportů zaměřených na ziskovost</p>
+                                </div>
+                                <div className="text-right">
+                                    <div className="text-sm font-bold gradient-text">Pure.</div>
+                                    <div className="text-xs text-pure-muted">pureonline.cz</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {!showPreview ? (
+                        <div className="max-w-4xl mx-auto px-4 py-8 no-print">
+                            {/* Tabs */}
+                            <div className="flex border-b border-pure-border mb-8">
+                                {tabs.map((tab, i) => (
+                                    <button 
+                                        key={i} 
+                                        onClick={() => setActiveTab(i)} 
+                                        className={`px-5 py-3 font-medium transition-colors ${activeTab === i ? 'tab-active' : 'text-pure-muted hover:text-pure-text'}`}
+                                    >
+                                        {tab}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Content */}
+                            <div className="bg-pure-darker rounded-2xl border border-pure-border p-8">
+                                {activeTab === 0 && (
+                                    <div className="grid grid-cols-2 gap-6">
+                                        <InputField label="Web / Klient" name="clientName" value={data.clientName} onChange={handleBlur} placeholder="example.cz" />
+                                        <ImageUpload label="Logo klienta" name="clientLogo" value={data.clientLogo} onChange={handleBlur} />
+                                        <InputField label="Měsíc (RRRR-MM)" name="reportMonth" value={data.reportMonth} onChange={handleBlur} />
+                                        <InputField label="Připravil" name="preparedBy" value={data.preparedBy} onChange={handleBlur} />
+                                        <InputField label="Měsíční investice do SEO (Kč)" name="seoFee" value={data.seoFee} onChange={handleBlur} type="number" />
+                                        <InputField label="Začátek spolupráce (RRRR-MM)" name="startDate" value={data.startDate} onChange={handleBlur} placeholder="2024-01" />
+                                    </div>
+                                )}
+
+                                {activeTab === 1 && (
+                                    <div>
+                                        <div className="mb-6 p-4 bg-pure-card rounded-lg border border-pure-border">
+                                            <p className="text-sm text-pure-muted mb-2">📁 Nahrát GA4 Akvizice export (Organic Search)</p>
+                                            <p className="text-xs text-pure-muted/70 mb-4">GA4 → Přehledy → Akvizice → Akvizice návštěvnosti → Export CSV</p>
+                                            <div className="grid grid-cols-3 gap-4">
+                                                <BusinessCsvUpload 
+                                                    label="Aktuální měsíc" 
+                                                    suffix=""
+                                                    onDataParsed={(parsedData, suffix) => setData(prev => ({ 
+                                                        ...prev, 
+                                                        [`sessions${suffix}`]: parsedData.sessions,
+                                                        [`conversions${suffix}`]: parsedData.conversions,
+                                                        [`revenue${suffix}`]: parsedData.revenue,
+                                                        [`convRate${suffix}`]: parsedData.convRate
+                                                    }))}
+                                                />
+                                                <BusinessCsvUpload 
+                                                    label="Minulý měsíc (MoM)" 
+                                                    suffix="Mom"
+                                                    onDataParsed={(parsedData, suffix) => setData(prev => ({ 
+                                                        ...prev, 
+                                                        [`sessions${suffix}`]: parsedData.sessions,
+                                                        [`conversions${suffix}`]: parsedData.conversions,
+                                                        [`revenue${suffix}`]: parsedData.revenue,
+                                                        [`convRate${suffix}`]: parsedData.convRate
+                                                    }))}
+                                                />
+                                                <BusinessCsvUpload 
+                                                    label="Minulý rok (YoY)" 
+                                                    suffix="Yoy"
+                                                    onDataParsed={(parsedData, suffix) => setData(prev => ({ 
+                                                        ...prev, 
+                                                        [`sessions${suffix}`]: parsedData.sessions,
+                                                        [`conversions${suffix}`]: parsedData.conversions,
+                                                        [`revenue${suffix}`]: parsedData.revenue,
+                                                        [`convRate${suffix}`]: parsedData.convRate
+                                                    }))}
+                                                />
+                                            </div>
+                                        </div>
+                                        <MetricInputGroup label="Tržby (Kč)" name="revenue" data={data} onChange={handleBlur} />
+                                        <MetricInputGroup label="Konverze" name="conversions" data={data} onChange={handleBlur} />
+                                        <MetricInputGroup label="Míra konverze (%)" name="convRate" data={data} onChange={handleBlur} />
+                                    </div>
+                                )}
+
+                                {activeTab === 2 && (
+                                    <div>
+                                        <div className="mb-6 p-4 bg-pure-card rounded-lg border border-pure-border">
+                                            <p className="text-sm text-pure-muted mb-2">📁 Nahrát GA4 Akvizice export (pro Návštěvy)</p>
+                                            <p className="text-xs text-pure-muted/70 mb-4">GA4 → Přehledy → Akvizice → Akvizice návštěvnosti → Export CSV</p>
+                                            <div className="grid grid-cols-3 gap-4 mb-4">
+                                                <Ga4SessionsUpload 
+                                                    label="Aktuální měsíc" 
+                                                    suffix=""
+                                                    onDataParsed={(parsedData, suffix) => setData(prev => ({ 
+                                                        ...prev, 
+                                                        [`sessions${suffix}`]: parsedData.sessions
+                                                    }))}
+                                                />
+                                                <Ga4SessionsUpload 
+                                                    label="Minulý měsíc (MoM)" 
+                                                    suffix="Mom"
+                                                    onDataParsed={(parsedData, suffix) => setData(prev => ({ 
+                                                        ...prev, 
+                                                        [`sessions${suffix}`]: parsedData.sessions
+                                                    }))}
+                                                />
+                                                <Ga4SessionsUpload 
+                                                    label="Minulý rok (YoY)" 
+                                                    suffix="Yoy"
+                                                    onDataParsed={(parsedData, suffix) => setData(prev => ({ 
+                                                        ...prev, 
+                                                        [`sessions${suffix}`]: parsedData.sessions
+                                                    }))}
+                                                />
+                                            </div>
+                                            <p className="text-sm text-pure-muted mb-2 mt-6">📁 Nahrát GSC Chart.csv (pro Clicks, Impressions, CTR, Position)</p>
+                                            <p className="text-xs text-pure-muted/70 mb-4">GSC → Performance → Export → Rozbal ZIP → Chart.csv</p>
+                                            <div className="grid grid-cols-3 gap-4">
+                                                <GscTrafficUpload 
+                                                    label="Aktuální měsíc" 
+                                                    suffix=""
+                                                    onDataParsed={(parsedData, suffix) => setData(prev => ({ 
+                                                        ...prev, 
+                                                        [`clicks${suffix}`]: parsedData.clicks,
+                                                        [`impressions${suffix}`]: parsedData.impressions,
+                                                        [`avgPosition${suffix}`]: parsedData.avgPosition,
+                                                        [`ctr${suffix}`]: parsedData.ctr
+                                                    }))}
+                                                />
+                                                <GscTrafficUpload 
+                                                    label="Minulý měsíc (MoM)" 
+                                                    suffix="Mom"
+                                                    onDataParsed={(parsedData, suffix) => setData(prev => ({ 
+                                                        ...prev, 
+                                                        [`clicks${suffix}`]: parsedData.clicks,
+                                                        [`impressions${suffix}`]: parsedData.impressions,
+                                                        [`avgPosition${suffix}`]: parsedData.avgPosition,
+                                                        [`ctr${suffix}`]: parsedData.ctr
+                                                    }))}
+                                                />
+                                                <GscTrafficUpload 
+                                                    label="Minulý rok (YoY)" 
+                                                    suffix="Yoy"
+                                                    onDataParsed={(parsedData, suffix) => setData(prev => ({ 
+                                                        ...prev, 
+                                                        [`clicks${suffix}`]: parsedData.clicks,
+                                                        [`impressions${suffix}`]: parsedData.impressions,
+                                                        [`avgPosition${suffix}`]: parsedData.avgPosition,
+                                                        [`ctr${suffix}`]: parsedData.ctr
+                                                    }))}
+                                                />
+                                            </div>
+                                        </div>
+                                        <MetricInputGroup label="Návštěvy (Sessions)" name="sessions" data={data} onChange={handleBlur} />
+                                        <MetricInputGroup label="Prokliky (Clicks)" name="clicks" data={data} onChange={handleBlur} />
+                                        <MetricInputGroup label="Zobrazení (Impressions)" name="impressions" data={data} onChange={handleBlur} />
+                                        <MetricInputGroup label="Průměrná pozice" name="avgPosition" data={data} onChange={handleBlur} />
+                                        <MetricInputGroup label="CTR (%)" name="ctr" data={data} onChange={handleBlur} />
+                                    </div>
+                                )}
+
+                                {activeTab === 3 && (
+                                    <div>
+                                        <div className="mb-6">
+                                            <CsvUpload 
+                                                label="📁 Nahrát CSV z GA4 pro Top stránky" 
+                                                fileName={data.topPagesFileName}
+                                                onFileChange={(csvData, fileName) => setData(prev => ({ ...prev, topPagesCsv: csvData, topPagesFileName: fileName }))}
+                                            />
+                                            <p className="text-xs text-pure-muted/70 mt-1">GA4 → Přehledy → Zapojení → Vstupní stránky → Filtr: Organic → Export CSV</p>
+                                        </div>
+                                        
+                                        <div className="pt-6 border-t border-pure-border">
+                                            <GscKeywordsUpload 
+                                                label="📁 Nahrát Queries.csv z GSC exportu pro Top klíčová slova" 
+                                                fileName={data.topKeywordsFileName}
+                                                onFileChange={(csvData, fileName) => setData(prev => ({ ...prev, topKeywordsCsv: csvData, topKeywordsFileName: fileName }))}
+                                            />
+                                            <p className="text-xs text-pure-muted/70 mt-1">GSC → Performance → Export → Rozbal ZIP → Queries.csv</p>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {activeTab === 4 && (
+                                    <div>
+                                        <TextAreaField label="Shrnutí měsíce" name="summary" value={data.summary} onChange={handleBlur} rows={3} />
+                                        <div className="grid grid-cols-2 gap-6">
+                                            <TextAreaField label="Realizované aktivity" name="realized" value={data.realized} onChange={handleBlur} placeholder="SEO audit" rows={4} />
+                                            <TextAreaField label="Plánované aktivity" name="planned" value={data.planned} onChange={handleBlur} placeholder="Linkbuilding" rows={4} />
+                                        </div>
+                                        <TextAreaField label="Priority (Akce | Dopad | Náročnost | Priorita)" name="priorities" value={data.priorities} onChange={handleBlur} placeholder="Optimalizace | +15% | Střední | VYSOKÁ" rows={3} />
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Generate Button */}
+                            <div className="flex gap-4 mt-8">
+                                <button 
+                                    onClick={() => setShowPreview(true)} 
+                                    className="flex-1 bg-pure-green text-pure-dark py-4 px-6 rounded-xl font-bold hover:bg-pure-green-dark transition-colors glow"
+                                >
+                                    🚀 Zobrazit report
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div>
+                            <div className="bg-pure-darker border-b border-pure-border py-4 px-4 flex gap-4 justify-center no-print">
+                                <button onClick={() => setShowPreview(false)} className="bg-pure-card text-pure-text py-2 px-5 rounded-lg hover:bg-pure-border transition-colors border border-pure-border">
+                                    ← Zpět na editaci
+                                </button>
+                                <button onClick={() => window.print()} className="bg-pure-green text-pure-dark py-2 px-5 rounded-lg font-semibold hover:bg-pure-green-dark transition-colors">
+                                    🖨️ Tisk / PDF
+                                </button>
+                            </div>
+                            <ReportPreview data={data} />
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
